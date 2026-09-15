@@ -73,6 +73,47 @@ app.get('/tasks', async (req, res) => {
   }
 });
 
+// Extra: Statistics endpoint using SQL aggregates
+app.get('/stats', async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        COUNT(*)::int AS total,
+        SUM(CASE WHEN done = true THEN 1 ELSE 0 END)::int AS done,
+        SUM(CASE WHEN done = false THEN 1 ELSE 0 END)::int AS open
+      FROM tasks
+    `);
+    const row = result.rows[0];
+    res.status(200).json({
+      total: row.total || 0,
+      done: row.done || 0,
+      open: row.open || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Extra: Reset endpoint
+app.post('/reset', async (req, res) => {
+  try {
+    await db.query('TRUNCATE TABLE tasks RESTART IDENTITY;');
+    await db.query(`
+      INSERT INTO tasks (title, done) VALUES 
+      ('Learn Express basics', true),
+      ('Build CRUD API endpoints', false),
+      ('Test API with Swagger UI', false);
+    `);
+    const result = await db.query('SELECT * FROM tasks ORDER BY id ASC;');
+    res.status(200).json({
+      message: "Database reset to initial 3 seed tasks",
+      tasks: result.rows.map(formatTask)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/tasks/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -83,6 +124,82 @@ app.get('/tasks/:id', async (req, res) => {
     }
 
     res.status(200).json(formatTask(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stage 3: Create task with SQL INSERT and RETURNING *
+app.post('/tasks', async (req, res) => {
+  try {
+    const { title } = req.body;
+
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      return res.status(400).json({ error: "Title is required and must be a non-empty string" });
+    }
+
+    const cleanTitle = title.trim();
+    const result = await db.query(
+      'INSERT INTO tasks (title, done) VALUES ($1, false) RETURNING *',
+      [cleanTitle]
+    );
+
+    res.status(201).json(formatTask(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stage 3: Update task with SQL UPDATE and RETURNING *
+app.put('/tasks/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const checkRes = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
+
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: `Task ${req.params.id} not found` });
+    }
+
+    const existingRow = checkRes.rows[0];
+    const { title, done } = req.body;
+
+    if (title === undefined && done === undefined) {
+      return res.status(400).json({ error: "At least one of 'title' or 'done' must be provided for update" });
+    }
+
+    if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
+      return res.status(400).json({ error: "Title must be a non-empty string" });
+    }
+
+    if (done !== undefined && typeof done !== 'boolean') {
+      return res.status(400).json({ error: "Done status must be a boolean" });
+    }
+
+    const newTitle = title !== undefined ? title.trim() : existingRow.title;
+    const newDone = done !== undefined ? done : existingRow.done;
+
+    const updateRes = await db.query(
+      'UPDATE tasks SET title = $1, done = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 RETURNING *',
+      [newTitle, newDone, id]
+    );
+
+    res.status(200).json(formatTask(updateRes.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stage 3: Delete task with SQL DELETE
+app.delete('/tasks/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const deleteRes = await db.query('DELETE FROM tasks WHERE id = $1 RETURNING *', [id]);
+
+    if (deleteRes.rows.length === 0) {
+      return res.status(404).json({ error: `Task ${req.params.id} not found` });
+    }
+
+    res.status(204).send();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
