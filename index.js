@@ -73,6 +73,22 @@ app.get('/tasks/:id', (req, res) => {
   res.status(200).json(formatTask(row));
 });
 
+// Stage 2: Create task with SQL INSERT and validation
+app.post('/tasks', (req, res) => {
+  const { title } = req.body;
+
+  if (!title || typeof title !== 'string' || title.trim() === '') {
+    return res.status(400).json({ error: "Title is required and must be a non-empty string" });
+  }
+
+  const cleanTitle = title.trim();
+  const stmt = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)');
+  const info = stmt.run(cleanTitle);
+
+  const newRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(formatTask(newRow));
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
