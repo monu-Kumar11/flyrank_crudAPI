@@ -14,6 +14,8 @@ let tasks = [
   { id: 3, title: "Test API with Swagger UI", done: false }
 ];
 
+let nextId = 4;
+
 // Stage 1: Root and health endpoints
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -41,6 +43,24 @@ app.get('/tasks/:id', (req, res) => {
   }
 
   res.status(200).json(task);
+});
+
+// Stage 3: Create endpoint with input validation
+app.post('/tasks', (req, res) => {
+  const { title } = req.body;
+
+  if (!title || typeof title !== 'string' || title.trim() === '') {
+    return res.status(400).json({ error: "Title is required and must be a non-empty string" });
+  }
+
+  const newTask = {
+    id: nextId++,
+    title: title.trim(),
+    done: false
+  };
+
+  tasks.push(newTask);
+  res.status(201).json(newTask);
 });
 
 if (require.main === module) {
