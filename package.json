@@ -21,6 +21,7 @@
   "author": "Monu Kumar",
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "swagger-ui-express": "^5.0.1"
