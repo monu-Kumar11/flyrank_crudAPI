@@ -1,8 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpec = require('./openapi.json');
-const db = require('./db');
+const db = require('./pg_db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,7 +14,7 @@ app.use(express.json());
 // Stage 5: Serve Swagger UI at /docs
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
 
-// Helper function to format database row into clean API task response object
+// Helper function to format PostgreSQL row into clean API task response object
 function formatTask(row) {
   if (!row) return null;
   return {
@@ -34,145 +35,57 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: "ok" });
+app.get('/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.status(200).json({ status: "ok", db: "ok" });
+  } catch (err) {
+    res.status(500).json({ status: "error", db: "disconnected" });
+  }
 });
 
-// Stage 1: Read endpoints backed by SQLite
-app.get('/tasks', (req, res) => {
-  let query = 'SELECT * FROM tasks WHERE 1=1';
-  const params = [];
+// Stage 2: Read endpoints backed by PostgreSQL
+app.get('/tasks', async (req, res) => {
+  try {
+    let query = 'SELECT * FROM tasks WHERE 1=1';
+    const params = [];
+    let paramIdx = 1;
 
-  // Extra: Filter by status using SQL WHERE done = ?
-  if (req.query.done !== undefined) {
-    query += ' AND done = ?';
-    params.push(req.query.done === 'true' ? 1 : 0);
+    // Filter by status using SQL WHERE done = $1
+    if (req.query.done !== undefined) {
+      query += ` AND done = $${paramIdx++}`;
+      params.push(req.query.done === 'true');
+    }
+
+    // Search by title using SQL WHERE title ILIKE $2
+    if (req.query.search) {
+      query += ` AND title ILIKE $${paramIdx++}`;
+      params.push(`%${req.query.search}%`);
+    }
+
+    query += ' ORDER BY id ASC';
+
+    const result = await db.query(query, params);
+    const tasks = result.rows.map(formatTask);
+    res.status(200).json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  // Extra: Search by title using SQL WHERE title LIKE ?
-  if (req.query.search) {
-    query += ' AND title LIKE ?';
-    params.push(`%${req.query.search}%`);
-  }
-
-  query += ' ORDER BY id ASC';
-
-  const rows = db.prepare(query).all(...params);
-  const tasks = rows.map(formatTask);
-  res.status(200).json(tasks);
 });
 
-// Extra: Statistics endpoint using SQL aggregates
-app.get('/stats', (req, res) => {
-  const statsRow = db.prepare(`
-    SELECT 
-      COUNT(*) AS total,
-      SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END) AS done,
-      SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END) AS open
-    FROM tasks
-  `).get();
+app.get('/tasks/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const result = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
 
-  res.status(200).json({
-    total: statsRow.total || 0,
-    done: statsRow.done || 0,
-    open: statsRow.open || 0
-  });
-});
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: `Task ${req.params.id} not found` });
+    }
 
-// Extra: Seed & Reset endpoint using SQL transaction
-app.post('/reset', (req, res) => {
-  const resetTx = db.transaction(() => {
-    db.prepare('DELETE FROM tasks').run();
-    db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run('tasks');
-
-    const insertStmt = db.prepare('INSERT INTO tasks (title, done) VALUES (?, ?)');
-    insertStmt.run('Learn Express basics', 1);
-    insertStmt.run('Build CRUD API endpoints', 0);
-    insertStmt.run('Test API with Swagger UI', 0);
-  });
-
-  resetTx();
-  const rows = db.prepare('SELECT * FROM tasks ORDER BY id ASC').all();
-  res.status(200).json({
-    message: "Database reset to initial 3 seed tasks",
-    tasks: rows.map(formatTask)
-  });
-});
-
-app.get('/tasks/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!row) {
-    return res.status(404).json({ error: `Task ${req.params.id} not found` });
+    res.status(200).json(formatTask(result.rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.status(200).json(formatTask(row));
-});
-
-// Stage 2: Create task with SQL INSERT and validation
-app.post('/tasks', (req, res) => {
-  const { title } = req.body;
-
-  if (!title || typeof title !== 'string' || title.trim() === '') {
-    return res.status(400).json({ error: "Title is required and must be a non-empty string" });
-  }
-
-  const cleanTitle = title.trim();
-  const stmt = db.prepare('INSERT INTO tasks (title, done) VALUES (?, 0)');
-  const info = stmt.run(cleanTitle);
-
-  const newRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json(formatTask(newRow));
-});
-
-// Stage 3: Update task with SQL UPDATE
-app.put('/tasks/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const existingRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!existingRow) {
-    return res.status(404).json({ error: `Task ${req.params.id} not found` });
-  }
-
-  const { title, done } = req.body;
-
-  if (title === undefined && done === undefined) {
-    return res.status(400).json({ error: "At least one of 'title' or 'done' must be provided for update" });
-  }
-
-  if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
-    return res.status(400).json({ error: "Title must be a non-empty string" });
-  }
-
-  if (done !== undefined && typeof done !== 'boolean') {
-    return res.status(400).json({ error: "Done status must be a boolean" });
-  }
-
-  const newTitle = title !== undefined ? title.trim() : existingRow.title;
-  const newDone = done !== undefined ? (done ? 1 : 0) : existingRow.done;
-
-  db.prepare(`
-    UPDATE tasks 
-    SET title = ?, done = ?, updated_at = CURRENT_TIMESTAMP 
-    WHERE id = ?
-  `).run(newTitle, newDone, id);
-
-  const updatedRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-  res.status(200).json(formatTask(updatedRow));
-});
-
-// Stage 3: Delete task with SQL DELETE
-app.delete('/tasks/:id', (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const existingRow = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
-
-  if (!existingRow) {
-    return res.status(404).json({ error: `Task ${req.params.id} not found` });
-  }
-
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-  res.status(204).send();
 });
 
 if (require.main === module) {
