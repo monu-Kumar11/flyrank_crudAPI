@@ -1,0 +1,28 @@
+{
+  "name": "flyrank-crud-api",
+  "version": "1.0.0",
+  "description": "FlyRank Backend Track Week 2 CRUD API Assignment (Node.js/Express)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monu-Kumar11/flyrank_crudAPI.git"
+  },
+  "keywords": [
+    "flyrank",
+    "express",
+    "crud",
+    "api",
+    "swagger"
+  ],
+  "author": "Monu Kumar",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "swagger-ui-express": "^5.0.1"
+  }
+}
