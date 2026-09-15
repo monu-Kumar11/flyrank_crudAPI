@@ -63,6 +63,52 @@ app.post('/tasks', (req, res) => {
   res.status(201).json(newTask);
 });
 
+// Stage 4: Update & Delete endpoints
+app.put('/tasks/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const taskIndex = tasks.findIndex(t => t.id === id);
+
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: `Task ${req.params.id} not found` });
+  }
+
+  const { title, done } = req.body;
+
+  if (title === undefined && done === undefined) {
+    return res.status(400).json({ error: "At least one of 'title' or 'done' must be provided for update" });
+  }
+
+  if (title !== undefined && (typeof title !== 'string' || title.trim() === '')) {
+    return res.status(400).json({ error: "Title must be a non-empty string" });
+  }
+
+  if (done !== undefined && typeof done !== 'boolean') {
+    return res.status(400).json({ error: "Done status must be a boolean" });
+  }
+
+  if (title !== undefined) {
+    tasks[taskIndex].title = title.trim();
+  }
+
+  if (done !== undefined) {
+    tasks[taskIndex].done = done;
+  }
+
+  res.status(200).json(tasks[taskIndex]);
+});
+
+app.delete('/tasks/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const taskIndex = tasks.findIndex(t => t.id === id);
+
+  if (taskIndex === -1) {
+    return res.status(404).json({ error: `Task ${req.params.id} not found` });
+  }
+
+  tasks.splice(taskIndex, 1);
+  res.status(204).send();
+});
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
